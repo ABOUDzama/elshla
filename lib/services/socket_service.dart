@@ -15,12 +15,10 @@ class SocketService {
 
   void initSocket() {
     socket = IO.io(serverUrl, <String, dynamic>{
-      'transports': [
-        'polling',
-        'websocket',
-      ], // polling أولاً ثم ترقية لـ websocket
+      'transports': ['polling', 'websocket'],
       'autoConnect': false,
       'forceNew': true,
+      'port': 443,
     });
     socket.connect();
 
