@@ -128,29 +128,20 @@ class _LobbyScreenState extends State<LobbyScreen>
 
   void _createRoom() {
     if (!_validate()) return;
-    if (!SocketService().socket.connected) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('⚠️ غير متصل بالسيرفر، جاري المحاولة...'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      SocketService().initSocket();
-      return;
-    }
     setState(() => _isLoading = true);
     SocketService().socket.emit('create_room', {
       'playerName': _nameController.text.trim(),
       'avatar': _avatarBase64,
     });
-    // Timeout بعد 10 ثواني
-    Future.delayed(const Duration(seconds: 10), () {
+    // Timeout بعد 15 ثانية
+    Future.delayed(const Duration(seconds: 15), () {
       if (mounted && _isLoading) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('⏱️ انتهى الوقت، تحقق من اتصالك بالإنترنت'),
+            content: Text('⚠️ تعذر الاتصال، تحقق من الإنترنت وأعد المحاولة'),
             backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
           ),
         );
       }
@@ -165,29 +156,20 @@ class _LobbyScreenState extends State<LobbyScreen>
       ).showSnackBar(const SnackBar(content: Text('الرجاء إدخال كود الغرفة')));
       return;
     }
-    if (!SocketService().socket.connected) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('⚠️ غير متصل بالسيرفر، جاري المحاولة...'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      SocketService().initSocket();
-      return;
-    }
     setState(() => _isLoading = true);
     SocketService().socket.emit('join_room', {
       'roomCode': _roomCodeController.text.trim(),
       'playerName': _nameController.text.trim(),
       'avatar': _avatarBase64,
     });
-    Future.delayed(const Duration(seconds: 10), () {
+    Future.delayed(const Duration(seconds: 15), () {
       if (mounted && _isLoading) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('⏱️ الغرفة غير موجودة أو انتهى الوقت'),
+            content: Text('⚠️ الغرفة غير موجودة أو تعذر الاتصال'),
             backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
           ),
         );
       }
