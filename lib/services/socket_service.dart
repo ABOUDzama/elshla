@@ -6,7 +6,7 @@ class SocketService {
   bool _initialized = false;
 
   // Railway backend server
-  final String serverUrl = 'https://elshla-production.up.railway.app';
+  final String serverUrl = 'https://elshla-production.up.railway.app:443';
 
   factory SocketService() => _instance;
   SocketService._internal();
