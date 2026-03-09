@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -102,7 +102,7 @@ class _LobbyScreenState extends State<LobbyScreen>
       imageQuality: 70,
     );
     if (picked != null) {
-      final bytes = await File(picked.path).readAsBytes();
+      final bytes = await picked.readAsBytes(); // Works on Web + Mobile
       setState(() {
         _avatarBase64 = base64Encode(bytes);
       });
