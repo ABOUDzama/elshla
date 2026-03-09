@@ -6,8 +6,7 @@ class SocketService {
   bool _initialized = false;
 
   // Railway backend - port 443 explicit to prevent :0 bug in socket_io_client
-  static const String _serverUrl =
-      'https://elshla-production.up.railway.app:443';
+  static const String _serverUrl = 'https://elshla-production.up.railway.app';
 
   factory SocketService() => _instance;
   SocketService._internal();
