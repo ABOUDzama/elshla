@@ -128,20 +128,26 @@ io.on('connection', (socket) => {
             const room = rooms[roomCode];
             const wasHost = room.host === socket.id;
 
+            // Find the leaving player's name BEFORE removing
+            const leavingPlayer = room.players.find(p => p.id === socket.id);
+            const leavingName = leavingPlayer ? leavingPlayer.name : 'لاعب';
+
             // Remove player from list
             room.players = room.players.filter(p => p.id !== socket.id);
 
             if (room.players.length === 0 || wasHost) {
                 // If host left or room is empty, close the room
-                io.to(roomCode).emit('room_closed', { message: 'غادر المضيف الغرفة. انتهت اللعبة.' });
+                io.to(roomCode).emit('room_closed', {
+                    message: `👑 غادر المضيف "${leavingName}" الغرفة. انتهت الجلسة.`
+                });
                 delete rooms[roomCode];
             } else {
-                // Otherwise just notify remaining players
-                io.to(roomCode).emit('players_updated', { players: room.players });
+                // Notify remaining players with the name
                 io.to(roomCode).emit('player_left', {
-                    message: `غادر لاعب الغرفة.`,
+                    message: `👋 غادر "${leavingName}" الغرفة.`,
                     players: room.players
                 });
+                io.to(roomCode).emit('players_updated', { players: room.players });
             }
         }
     });

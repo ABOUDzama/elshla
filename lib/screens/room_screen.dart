@@ -57,10 +57,29 @@ class _RoomScreenState extends State<RoomScreen> {
 
     SocketService().socket.on('player_left', (data) {
       if (!mounted) return;
+      final List<dynamic>? updatedPlayers = data['players'];
+      if (updatedPlayers != null) {
+        setState(() {
+          _players = updatedPlayers
+              .map((p) => Map<String, dynamic>.from(p))
+              .toList();
+        });
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(data['message'] ?? 'غادر لاعب الغرفة'),
+          content: Row(
+            children: [
+              const Text('👋 ', style: TextStyle(fontSize: 18)),
+              Expanded(
+                child: Text(
+                  data['message'] ?? 'غادر لاعب الغرفة',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
           backgroundColor: Colors.orange.shade700,
+          duration: const Duration(seconds: 3),
         ),
       );
     });
@@ -137,10 +156,7 @@ class _RoomScreenState extends State<RoomScreen> {
       default:
         return;
     }
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => gameScreen!),
-    );
+    Navigator.push(context, MaterialPageRoute(builder: (_) => gameScreen!));
   }
 
   void _copyCode() {
