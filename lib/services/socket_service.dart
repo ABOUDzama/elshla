@@ -4,8 +4,8 @@ class SocketService {
   static final SocketService _instance = SocketService._internal();
   late IO.Socket socket;
 
-  // Using local IP address for physical device and web testing on the same network
-  final String serverUrl = 'http://192.168.1.7:3000';
+  // Railway backend server - stable and permanent URL
+  final String serverUrl = 'https://elshla-production.up.railway.app';
 
   factory SocketService() {
     return _instance;
@@ -15,9 +15,12 @@ class SocketService {
 
   void initSocket() {
     socket = IO.io(serverUrl, <String, dynamic>{
-      'transports': ['websocket', 'polling'], // السماح بالبولينج أولاً للترقية
+      'transports': [
+        'polling',
+        'websocket',
+      ], // polling أولاً ثم ترقية لـ websocket
       'autoConnect': false,
-      'forceNew': true, // إجبار اتصال جديد في كل مرة
+      'forceNew': true,
     });
     socket.connect();
 
