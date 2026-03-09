@@ -18,7 +18,6 @@ class SocketService {
       'transports': ['polling', 'websocket'],
       'autoConnect': false,
       'forceNew': true,
-      'port': 443,
     });
     socket.connect();
 

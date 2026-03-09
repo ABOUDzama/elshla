@@ -19,6 +19,7 @@ class _LobbyScreenState extends State<LobbyScreen>
   final TextEditingController _roomCodeController = TextEditingController();
   String? _avatarBase64;
   bool _isLoading = false;
+  bool _isPickingImage = false;
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
 
@@ -94,18 +95,24 @@ class _LobbyScreenState extends State<LobbyScreen>
   }
 
   Future<void> _pickAvatar() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 300,
-      maxHeight: 300,
-      imageQuality: 70,
-    );
-    if (picked != null) {
-      final bytes = await picked.readAsBytes(); // Works on Web + Mobile
-      setState(() {
-        _avatarBase64 = base64Encode(bytes);
-      });
+    if (_isPickingImage) return; // منع الفتح المزدوج
+    _isPickingImage = true;
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 300,
+        maxHeight: 300,
+        imageQuality: 70,
+      );
+      if (picked != null && mounted) {
+        final bytes = await picked.readAsBytes();
+        setState(() {
+          _avatarBase64 = base64Encode(bytes);
+        });
+      }
+    } finally {
+      _isPickingImage = false;
     }
   }
 
@@ -121,10 +128,32 @@ class _LobbyScreenState extends State<LobbyScreen>
 
   void _createRoom() {
     if (!_validate()) return;
+    if (!SocketService().socket.connected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ غير متصل بالسيرفر، جاري المحاولة...'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      SocketService().initSocket();
+      return;
+    }
     setState(() => _isLoading = true);
     SocketService().socket.emit('create_room', {
       'playerName': _nameController.text.trim(),
       'avatar': _avatarBase64,
+    });
+    // Timeout بعد 10 ثواني
+    Future.delayed(const Duration(seconds: 10), () {
+      if (mounted && _isLoading) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⏱️ انتهى الوقت، تحقق من اتصالك بالإنترنت'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     });
   }
 
@@ -136,11 +165,32 @@ class _LobbyScreenState extends State<LobbyScreen>
       ).showSnackBar(const SnackBar(content: Text('الرجاء إدخال كود الغرفة')));
       return;
     }
+    if (!SocketService().socket.connected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ غير متصل بالسيرفر، جاري المحاولة...'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      SocketService().initSocket();
+      return;
+    }
     setState(() => _isLoading = true);
     SocketService().socket.emit('join_room', {
       'roomCode': _roomCodeController.text.trim(),
       'playerName': _nameController.text.trim(),
       'avatar': _avatarBase64,
+    });
+    Future.delayed(const Duration(seconds: 10), () {
+      if (mounted && _isLoading) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⏱️ الغرفة غير موجودة أو انتهى الوقت'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     });
   }
 
