@@ -6,6 +6,9 @@ import '../services/socket_service.dart';
 import '../games/xo_game.dart';
 import '../games/seega_game.dart';
 import '../games/gobblet_game.dart';
+import '../games/five_seconds_game.dart';
+import '../games/pictionary_game.dart';
+import '../games/ludo_game.dart';
 
 class RoomScreen extends StatefulWidget {
   final String roomCode;
@@ -174,6 +177,46 @@ class _RoomScreenState extends State<RoomScreen> {
           opponentName: opponentName,
         );
         break;
+      case 'Gobblet': // Added case for 'Gobblet' with capital G
+        gameScreen = GobbletGame(
+          online: true,
+          isHost: widget.isHost,
+          roomCode: widget.roomCode,
+          opponentName: opponentName,
+        );
+        break;
+      case 'Seega': // Added case for 'Seega' with capital S
+        gameScreen = SeegaGame(
+          online: true,
+          isHost: widget.isHost,
+          roomCode: widget.roomCode,
+          opponentName: opponentName,
+        );
+        break;
+      case 'five_seconds':
+        gameScreen = FiveSecondsGame(
+          online: true,
+          isHost: widget.isHost,
+          roomCode: widget.roomCode,
+          opponentName: opponentName,
+        );
+        break;
+      case 'pictionary':
+        gameScreen = PictionaryGame(
+          online: true,
+          isHost: widget.isHost,
+          roomCode: widget.roomCode,
+          opponentName: opponentName,
+        );
+        break;
+      case 'ludo':
+        gameScreen = LudoGame(
+          online: true,
+          isHost: widget.isHost,
+          roomCode: widget.roomCode,
+          opponentName: opponentName,
+        );
+        break;
       default:
         return;
     }
@@ -326,13 +369,11 @@ class _RoomScreenState extends State<RoomScreen> {
                           ? (isReady
                                 ? '🎮 اختر اللعبة لتبدأ:'
                                 : '🎮 ستظهر الألعاب بعد انضمام لاعب آخر')
-                          : '🎮 الألعاب المتاحة (في انتظار المضيف):',
+                          : '🎮 الألعاب المتاحة (في انتظار اختيار المضيف):',
                       style: GoogleFonts.cairo(
                         fontSize: 17,
                         fontWeight: FontWeight.bold,
-                        color: (isReady || !widget.isHost)
-                            ? Colors.white
-                            : Colors.white38,
+                        color: (isReady) ? Colors.white : Colors.white70,
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -369,6 +410,42 @@ class _RoomScreenState extends State<RoomScreen> {
                       ),
                       onTap: (isReady && widget.isHost)
                           ? () => _selectGame('gobblet')
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    _GameTile(
+                      title: 'خمس ثواني',
+                      subtitle: 'تحدي الأسئلة السريعة',
+                      emoji: '⏱️',
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFAD1457), Color(0xFF880E4F)],
+                      ),
+                      onTap: (isReady && widget.isHost)
+                          ? () => _selectGame('five_seconds')
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    _GameTile(
+                      title: 'ارسم وخمّن',
+                      subtitle: 'تحدي الرسم السريع',
+                      emoji: '🎨',
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF0D47A1), Color(0xFF1976D2)],
+                      ),
+                      onTap: (isReady && widget.isHost)
+                          ? () => _selectGame('pictionary')
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    _GameTile(
+                      title: 'لودو الكلاسيكية',
+                      subtitle: 'تحدي الطاولة الرباعية',
+                      emoji: '🎲',
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFE53935), Color(0xFFC62828)],
+                      ),
+                      onTap: (isReady && widget.isHost)
+                          ? () => _selectGame('ludo')
                           : null,
                     ),
                     const SizedBox(height: 24),
@@ -641,17 +718,16 @@ class _GameTile extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedOpacity(
-        opacity: onTap == null ? 0.35 : 1.0,
+        opacity: onTap == null
+            ? 0.6
+            : 1.0, // جعل الشفافية 0.6 بدلاً من 0.35 ليظهر اللون للضيف
         duration: const Duration(milliseconds: 200),
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           decoration: BoxDecoration(
-            gradient: onTap != null
-                ? gradient
-                : const LinearGradient(
-                    colors: [Color(0xFF1E293B), Color(0xFF1E293B)],
-                  ),
+            gradient:
+                gradient, // عرض التدرج اللوني دائماً حتى لو كان الزر غير قابل للضغط
             borderRadius: BorderRadius.circular(18),
             boxShadow: onTap != null
                 ? [

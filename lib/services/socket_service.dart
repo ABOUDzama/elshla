@@ -32,12 +32,13 @@ class SocketService {
     print('🔌 Initializing socket to: $_serverUrl');
 
     _socket = IO.io(_serverUrl, <String, dynamic>{
-      'transports': ['polling'],
+      'transports': ['websocket', 'polling'],
       'autoConnect': false,
-      'timeout': 20000,
+      'timeout': 30000,
       'reconnection': true,
-      'reconnectionAttempts': 5,
-      'reconnectionDelay': 3000,
+      'reconnectionAttempts': 10,
+      'reconnectionDelay': 2000,
+      'forceNew': true,
     });
 
     _socket!.onConnect((_) {

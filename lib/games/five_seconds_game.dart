@@ -10,9 +10,21 @@ import '../data/five_seconds_data.dart';
 import '../services/ai_service.dart';
 import '../services/settings_service.dart';
 import '../widgets/game_intro_widget.dart';
+import '../services/socket_service.dart';
 
 class FiveSecondsGame extends StatefulWidget {
-  const FiveSecondsGame({super.key});
+  final bool online;
+  final bool isHost;
+  final String? roomCode;
+  final String? opponentName;
+
+  const FiveSecondsGame({
+    super.key,
+    this.online = false,
+    this.isHost = true,
+    this.roomCode,
+    this.opponentName,
+  });
 
   @override
   State<FiveSecondsGame> createState() => _FiveSecondsGameState();
@@ -85,7 +97,63 @@ class _FiveSecondsGameState extends State<FiveSecondsGame> {
   @override
   void initState() {
     super.initState();
-    _loadGameData();
+    if (widget.online) {
+      _showIntro = false;
+      _setupSocketListeners();
+    }
+
+    if (!widget.online || widget.isHost) {
+      _loadGameData();
+    } else {
+      // Guest waits for questions
+      setState(() {
+        isLoadingData = true;
+      });
+    }
+  }
+
+  void _setupSocketListeners() {
+    SocketService().socket.on('game_move', (data) {
+      if (!mounted) return;
+      final type = data['type'];
+
+      if (type == 'sync_questions') {
+        setState(() {
+          final List<dynamic> raw = data['questions'];
+          questions = raw.map((q) => Map<String, dynamic>.from(q)).toList();
+          currentQuestionIndex = data['currentIndex'];
+          _shuffledIndices = List<int>.from(data['shuffledIndices']);
+          _pointer = data['pointer'];
+          isLoadingData = false;
+        });
+      } else if (type == 'start_timer') {
+        _startTimerLocal();
+      } else if (type == 'next_question') {
+        setState(() {
+          _pointer = data['pointer'];
+          currentQuestionIndex = data['currentIndex'];
+          showAnswer = false;
+          isQuestionRevealed = false;
+          timeLeft = 5;
+          isTimerRunning = false;
+        });
+        timer?.cancel();
+      } else if (type == 'player_scored') {
+        final scorerName = data['playerName'];
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ $scorerName جاوب صح!'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        timer?.cancel();
+        setState(() {
+          isTimerRunning = false;
+          showAnswer = true;
+        });
+      }
+    });
   }
 
   Future<void> _loadGameData() async {
@@ -137,10 +205,34 @@ class _FiveSecondsGameState extends State<FiveSecondsGame> {
     if (_shuffledIndices.isNotEmpty) {
       currentQuestionIndex = _shuffledIndices[0];
     }
+
+    if (widget.online && widget.isHost) {
+      SocketService().socket.emit('game_move', {
+        'roomCode': widget.roomCode,
+        'moveData': {
+          'type': 'sync_questions',
+          'questions': questions,
+          'shuffledIndices': _shuffledIndices,
+          'currentIndex': currentQuestionIndex,
+          'pointer': _pointer,
+        },
+      });
+    }
   }
 
   void startTimer() {
     if (isTimerRunning) return;
+
+    if (widget.online && widget.isHost) {
+      SocketService().socket.emit('game_move', {
+        'roomCode': widget.roomCode,
+        'moveData': {'type': 'start_timer'},
+      });
+    }
+    _startTimerLocal();
+  }
+
+  void _startTimerLocal() {
     setState(() {
       isTimerRunning = true;
       isQuestionRevealed = true; // REVEAL ON START
@@ -175,11 +267,25 @@ class _FiveSecondsGameState extends State<FiveSecondsGame> {
       isTimerRunning = false;
     });
     timer?.cancel();
+
+    if (widget.online && widget.isHost) {
+      SocketService().socket.emit('game_move', {
+        'roomCode': widget.roomCode,
+        'moveData': {
+          'type': 'next_question',
+          'pointer': _pointer,
+          'currentIndex': currentQuestionIndex,
+        },
+      });
+    }
   }
 
   @override
   void dispose() {
     timer?.cancel();
+    if (widget.online) {
+      SocketService().socket.off('game_move');
+    }
     super.dispose();
   }
 
@@ -244,7 +350,7 @@ class _FiveSecondsGameState extends State<FiveSecondsGame> {
       title: '⏱️ خمس ثواني',
       backgroundColor: const Color(0xFFAD1457),
       actions: [
-        if (SettingsService.isAiEnabled)
+        if (SettingsService.isAiEnabled && (!widget.online || widget.isHost))
           IconButton(
             icon: _isGeneratingAi
                 ? const SizedBox(
@@ -261,13 +367,14 @@ class _FiveSecondsGameState extends State<FiveSecondsGame> {
                 ? null
                 : _generateAiQuestions,
           ),
-        IconButton(
-          icon: const Icon(Icons.sync, color: Colors.white70),
-          tooltip: 'تحديث الأسئلة',
-          onPressed: isTimerRunning || _isGeneratingAi
-              ? null
-              : _forceUpdateData,
-        ),
+        if (!widget.online || widget.isHost)
+          IconButton(
+            icon: const Icon(Icons.sync, color: Colors.white70),
+            tooltip: 'تحديث الأسئلة',
+            onPressed: isTimerRunning || _isGeneratingAi
+                ? null
+                : _forceUpdateData,
+          ),
       ],
       body: Container(
         decoration: const BoxDecoration(
@@ -462,6 +569,9 @@ class _FiveSecondsGameState extends State<FiveSecondsGame> {
 
   Widget _buildActionButtons() {
     if (!isTimerRunning && !showAnswer) {
+      if (widget.online && !widget.isHost) {
+        return _buildGuestWaitingMessage('بانتظار المضيف ليبدأ التحدي ⏳');
+      }
       return ElevatedButton(
         onPressed: startTimer,
         style: ElevatedButton.styleFrom(
@@ -488,14 +598,23 @@ class _FiveSecondsGameState extends State<FiveSecondsGame> {
           child: ElevatedButton.icon(
             onPressed: () {
               final scoreService = ScoreService();
+              String myName = 'لاعب';
               if (scoreService.players.isNotEmpty) {
-                scoreService.addScore(scoreService.players[0].name, 1);
+                myName = scoreService.players[0].name;
+                scoreService.addScore(myName, 1);
               }
               timer?.cancel();
               setState(() {
                 isTimerRunning = false;
                 showAnswer = true;
               });
+
+              if (widget.online) {
+                SocketService().socket.emit('game_move', {
+                  'roomCode': widget.roomCode,
+                  'moveData': {'type': 'player_scored', 'playerName': myName},
+                });
+              }
             },
             icon: const Icon(Icons.check_circle_outline, size: 32),
             label: Text(
@@ -517,6 +636,10 @@ class _FiveSecondsGameState extends State<FiveSecondsGame> {
           ),
         ),
       );
+    }
+
+    if (widget.online && !widget.isHost) {
+      return _buildGuestWaitingMessage('بانتظار المضيف للسؤال التالي ⏳');
     }
 
     return Padding(
@@ -547,6 +670,25 @@ class _FiveSecondsGameState extends State<FiveSecondsGame> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildGuestWaitingMessage(String msg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 40),
+      decoration: BoxDecoration(
+        color: Colors.white24,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Text(
+        msg,
+        style: GoogleFonts.cairo(
+          color: Colors.white,
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+        ),
+        textAlign: TextAlign.center,
       ),
     );
   }

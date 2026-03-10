@@ -11,6 +11,7 @@ import '../widgets/premium_loading_indicator.dart';
 import '../services/ai_service.dart';
 import '../services/settings_service.dart';
 import '../widgets/game_intro_widget.dart';
+import '../services/socket_service.dart';
 
 // ─── Drawing model ───────────────────────────────
 class DrawPoint {
@@ -45,7 +46,18 @@ class DrawingPainter extends CustomPainter {
 
 // ─── Game ──────────────────────────────────────────────────────────
 class PictionaryGame extends StatefulWidget {
-  const PictionaryGame({super.key});
+  final bool online;
+  final bool isHost;
+  final String? roomCode;
+  final String? opponentName;
+
+  const PictionaryGame({
+    super.key,
+    this.online = false,
+    this.isHost = true,
+    this.roomCode,
+    this.opponentName,
+  });
 
   @override
   State<PictionaryGame> createState() => _PictionaryGameState();
@@ -212,7 +224,75 @@ class _PictionaryGameState extends State<PictionaryGame> {
   @override
   void initState() {
     super.initState();
-    _loadGameData();
+    if (widget.online) {
+      _showIntro = false;
+      _setupSocketListeners();
+    }
+    if (!widget.online || widget.isHost) {
+      _loadGameData();
+    } else {
+      setState(() => isLoadingData = true);
+    }
+  }
+
+  void _setupSocketListeners() {
+    SocketService().socket.on('game_move', (data) {
+      if (!mounted) return;
+      final type = data['type'];
+
+      if (type == 'sync_word') {
+        setState(() {
+          _currentWord = Map<String, String>.from(data['word']);
+          _drawerIndex = data['drawerIndex'];
+          final List<dynamic> pRaw = data['players'];
+          _players.clear();
+          _players.addAll(pRaw.map((p) => Map<String, dynamic>.from(p)));
+          _points.clear();
+          _drawing = true;
+          _guessing = false;
+          _showResult = false;
+          _guessText = '';
+          _guessCorrect = null;
+          _started = true;
+          isLoadingData = false;
+        });
+      } else if (type == 'draw_point') {
+        setState(() {
+          final dx = data['dx'];
+          final dy = data['dy'];
+          final color = Color(data['color']);
+          final width = data['width'].toDouble();
+          _points.add(
+            DrawPoint(
+              dx == null ? null : Offset(dx.toDouble(), dy.toDouble()),
+              color,
+              width,
+            ),
+          );
+        });
+      } else if (type == 'clear_canvas') {
+        setState(() => _points.clear());
+      } else if (type == 'done_drawing') {
+        setState(() {
+          _drawing = false;
+          _guessing = true;
+        });
+      } else if (type == 'submit_guess') {
+        setState(() {
+          _guessText = data['guessText'];
+          _guessCorrect = null;
+          _showResult = true;
+          _guessing = false;
+        });
+      } else if (type == 'drawer_decide') {
+        setState(() {
+          _guessCorrect = data['correct'];
+          final List<dynamic> pRaw = data['players'];
+          _players.clear();
+          _players.addAll(pRaw.map((p) => Map<String, dynamic>.from(p)));
+        });
+      }
+    });
   }
 
   Future<void> _loadGameData() async {
@@ -252,6 +332,9 @@ class _PictionaryGameState extends State<PictionaryGame> {
   void dispose() {
     _playerCtrl.dispose();
     _guessCtrl.dispose();
+    if (widget.online) {
+      SocketService().socket.off('game_move');
+    }
     super.dispose();
   }
 
@@ -281,6 +364,18 @@ class _PictionaryGameState extends State<PictionaryGame> {
       _guessCorrect = null;
     });
     _guessCtrl.clear();
+
+    if (widget.online && widget.isHost) {
+      SocketService().socket.emit('game_move', {
+        'roomCode': widget.roomCode,
+        'moveData': {
+          'type': 'sync_word',
+          'word': _currentWord,
+          'drawerIndex': _drawerIndex,
+          'players': _players,
+        },
+      });
+    }
   }
 
   void _doneDrawing() {
@@ -289,6 +384,12 @@ class _PictionaryGameState extends State<PictionaryGame> {
       _drawing = false;
       _guessing = true;
     });
+    if (widget.online) {
+      SocketService().socket.emit('game_move', {
+        'roomCode': widget.roomCode,
+        'moveData': {'type': 'done_drawing'},
+      });
+    }
   }
 
   void _submitGuess() {
@@ -301,6 +402,13 @@ class _PictionaryGameState extends State<PictionaryGame> {
       _showResult = true;
       _guessing = false;
     });
+
+    if (widget.online) {
+      SocketService().socket.emit('game_move', {
+        'roomCode': widget.roomCode,
+        'moveData': {'type': 'submit_guess', 'guessText': guess},
+      });
+    }
   }
 
   void _drawerDecide(bool correct) {
@@ -312,9 +420,21 @@ class _PictionaryGameState extends State<PictionaryGame> {
         _players[guessIdx]['score'] = (_players[guessIdx]['score'] as int) + 1;
       }
     });
+    if (widget.online) {
+      SocketService().socket.emit('game_move', {
+        'roomCode': widget.roomCode,
+        'moveData': {
+          'type': 'drawer_decide',
+          'correct': correct,
+          'players': _players,
+        },
+      });
+    }
   }
 
   void _nextRound() {
+    if (widget.online && !widget.isHost) return;
+
     if (_players.isNotEmpty) {
       setState(() {
         _drawerIndex = (_drawerIndex + 1) % _players.length;
@@ -361,8 +481,28 @@ class _PictionaryGameState extends State<PictionaryGame> {
     }
   }
 
+  void _emitDrawPoint(Offset? offset, Color color, double width) {
+    if (!widget.online) return;
+    SocketService().socket.emit('game_move', {
+      'roomCode': widget.roomCode,
+      'moveData': {
+        'type': 'draw_point',
+        'dx': offset?.dx,
+        'dy': offset?.dy,
+        'color': color.value,
+        'width': width,
+      },
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    bool amIDrawer =
+        !widget.online ||
+        (widget.isHost ? _drawerIndex == 0 : _drawerIndex == 1);
+    bool amIGuesser =
+        !widget.online ||
+        (widget.isHost ? _drawerIndex == 1 : _drawerIndex == 0);
     if (_showIntro) {
       return BaseGameScaffold(
         title: '🎨 ارسم وخمّن',
@@ -436,62 +576,104 @@ class _PictionaryGameState extends State<PictionaryGame> {
                   style: GoogleFonts.cairo(fontSize: 15, color: Colors.white70),
                 ),
                 const SizedBox(height: 50),
-                ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => GlobalPlayerSelectionScreen(
-                              gameTitle: 'ارسم وخمّن',
-                              minPlayers: 2,
-                              onStartGame: (ctx, selectedPlayers) {
-                                Navigator.pop(ctx);
-                                setState(() {
-                                  _players.clear();
-                                  _players.addAll(
-                                    selectedPlayers.map(
-                                      (name) => {'name': name, 'score': 0},
-                                    ),
-                                  );
-                                  _drawerIndex = 0;
-                                  _started = true;
-                                  _pickWord();
-                                });
-                              },
-                            ),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.people_alt, size: 28),
-                      label: Text(
-                        'اختار شلتك وابدأ!',
-                        style: GoogleFonts.cairo(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.lightBlueAccent.shade700,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 40,
-                          vertical: 20,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(30),
-                        ),
-                        elevation: 10,
-                        shadowColor: Colors.lightBlueAccent.withValues(
-                          alpha: 0.5,
-                        ),
-                      ),
-                    )
-                    .animate(onPlay: (c) => c.repeat(reverse: true))
-                    .scale(
-                      begin: const Offset(1, 1),
-                      end: const Offset(1.05, 1.05),
-                      duration: 1.seconds,
+                if (widget.online && !widget.isHost)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 20,
+                      horizontal: 40,
                     ),
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Text(
+                      'بانتظار المضيف ليبدأ اللعبة ⏳',
+                      style: GoogleFonts.cairo(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  )
+                else
+                  ElevatedButton.icon(
+                        onPressed: () {
+                          if (widget.online && widget.isHost) {
+                            setState(() {
+                              _players.clear();
+                              _players.add({
+                                'name': 'أنا (المضيف)',
+                                'score': 0,
+                              });
+                              _players.add({
+                                'name': widget.opponentName ?? 'المنافس',
+                                'score': 0,
+                              });
+                              _drawerIndex = 0;
+                              _started = true;
+                              _pickWord();
+                            });
+                          } else {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    GlobalPlayerSelectionScreen(
+                                      gameTitle: 'ارسم وخمّن',
+                                      minPlayers: 2,
+                                      onStartGame: (ctx, selectedPlayers) {
+                                        Navigator.pop(ctx);
+                                        setState(() {
+                                          _players.clear();
+                                          _players.addAll(
+                                            selectedPlayers.map(
+                                              (name) => {
+                                                'name': name,
+                                                'score': 0,
+                                              },
+                                            ),
+                                          );
+                                          _drawerIndex = 0;
+                                          _started = true;
+                                          _pickWord();
+                                        });
+                                      },
+                                    ),
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.people_alt, size: 28),
+                        label: Text(
+                          'اختار شلتك وابدأ!',
+                          style: GoogleFonts.cairo(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.lightBlueAccent.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 40,
+                            vertical: 20,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          elevation: 10,
+                          shadowColor: Colors.lightBlueAccent.withValues(
+                            alpha: 0.5,
+                          ),
+                        ),
+                      )
+                      .animate(onPlay: (c) => c.repeat(reverse: true))
+                      .scale(
+                        begin: const Offset(1, 1),
+                        end: const Offset(1.05, 1.05),
+                        duration: 1.seconds,
+                      ),
               ],
             ),
           ),
@@ -550,7 +732,7 @@ class _PictionaryGameState extends State<PictionaryGame> {
                         ),
                       ),
                       Text(
-                        'الكلمة: ${_currentWord!['word']} (الرسام بس)',
+                        'الكلمة: ${amIDrawer ? _currentWord!['word'] : '؟؟؟'}',
                         style: GoogleFonts.cairo(
                           color: Colors.amberAccent,
                           fontWeight: FontWeight.bold,
@@ -585,29 +767,49 @@ class _PictionaryGameState extends State<PictionaryGame> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
                     child: GestureDetector(
-                      onPanStart: (d) => setState(
-                        () => _points.add(
-                          DrawPoint(
-                            d.localPosition,
-                            _selectedColor,
-                            _strokeWidth,
+                      onPanStart: (d) {
+                        if (!amIDrawer) return;
+                        setState(
+                          () => _points.add(
+                            DrawPoint(
+                              d.localPosition,
+                              _selectedColor,
+                              _strokeWidth,
+                            ),
                           ),
-                        ),
-                      ),
-                      onPanUpdate: (d) => setState(
-                        () => _points.add(
-                          DrawPoint(
-                            d.localPosition,
-                            _selectedColor,
-                            _strokeWidth,
+                        );
+                        _emitDrawPoint(
+                          d.localPosition,
+                          _selectedColor,
+                          _strokeWidth,
+                        );
+                      },
+                      onPanUpdate: (d) {
+                        if (!amIDrawer) return;
+                        setState(
+                          () => _points.add(
+                            DrawPoint(
+                              d.localPosition,
+                              _selectedColor,
+                              _strokeWidth,
+                            ),
                           ),
-                        ),
-                      ),
-                      onPanEnd: (_) => setState(
-                        () => _points.add(
-                          DrawPoint(null, _selectedColor, _strokeWidth),
-                        ),
-                      ),
+                        );
+                        _emitDrawPoint(
+                          d.localPosition,
+                          _selectedColor,
+                          _strokeWidth,
+                        );
+                      },
+                      onPanEnd: (_) {
+                        if (!amIDrawer) return;
+                        setState(
+                          () => _points.add(
+                            DrawPoint(null, _selectedColor, _strokeWidth),
+                          ),
+                        );
+                        _emitDrawPoint(null, _selectedColor, _strokeWidth);
+                      },
                       child: RepaintBoundary(
                         child: CustomPaint(
                           painter: DrawingPainter(_points),
@@ -648,7 +850,16 @@ class _PictionaryGameState extends State<PictionaryGame> {
                     ),
                     const SizedBox(width: 10),
                     GestureDetector(
-                      onTap: () => setState(() => _points.clear()),
+                      onTap: () {
+                        if (!amIDrawer) return;
+                        setState(() => _points.clear());
+                        if (widget.online) {
+                          SocketService().socket.emit('game_move', {
+                            'roomCode': widget.roomCode,
+                            'moveData': {'type': 'clear_canvas'},
+                          });
+                        }
+                      },
                       child: Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
@@ -692,29 +903,44 @@ class _PictionaryGameState extends State<PictionaryGame> {
               ),
 
               // Done drawing button
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                child: ElevatedButton.icon(
-                  onPressed: _doneDrawing,
-                  icon: const Icon(Icons.send_rounded, size: 22),
-                  label: Text(
-                    'خلصت الرسم! دي التلفون للمخمن 📱',
-                    style: GoogleFonts.cairo(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 15,
+              if (amIDrawer)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                  child: ElevatedButton.icon(
+                    onPressed: _doneDrawing,
+                    icon: const Icon(Icons.send_rounded, size: 22),
+                    label: Text(
+                      widget.online
+                          ? 'خلصت الرسم! خليه يخمن 📱'
+                          : 'خلصت الرسم! دي التلفون للمخمن 📱',
+                      style: GoogleFonts.cairo(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
                     ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.greenAccent.shade700,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    minimumSize: const Size(double.infinity, 50),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.greenAccent.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      minimumSize: const Size(double.infinity, 50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
                     ),
                   ),
                 ),
-              ),
+              if (!amIDrawer)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'بانتظار $_drawerName لينهي الرسمة... ⏳',
+                    style: GoogleFonts.cairo(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -785,57 +1011,71 @@ class _PictionaryGameState extends State<PictionaryGame> {
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                controller: _guessCtrl,
-                autofocus: false,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.cairo(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'اكتب تخمينك هنا...',
-                  hintStyle: GoogleFonts.cairo(color: Colors.grey),
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 14,
-                  ),
-                ),
-                onSubmitted: (_) => _submitGuess(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: ElevatedButton.icon(
-                onPressed: _submitGuess,
-                icon: const Icon(Icons.check_circle, size: 24),
-                label: Text(
-                  'تأكيد الإجابة ✅',
+            if (amIGuesser)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  controller: _guessCtrl,
+                  autofocus: false,
+                  textAlign: TextAlign.center,
                   style: GoogleFonts.cairo(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
                   ),
+                  decoration: InputDecoration(
+                    hintText: 'اكتب تخمينك هنا...',
+                    hintStyle: GoogleFonts.cairo(color: Colors.grey),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                  ),
+                  onSubmitted: (_) => _submitGuess(),
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.amberAccent,
-                  foregroundColor: Colors.black87,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  minimumSize: const Size(double.infinity, 52),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
+              ),
+            if (!amIGuesser)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'بانتظار $_guesserName ليُخمن...',
+                  style: GoogleFonts.cairo(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
-            ),
+            const SizedBox(height: 12),
+            if (amIGuesser)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: ElevatedButton.icon(
+                  onPressed: _submitGuess,
+                  icon: const Icon(Icons.check_circle, size: 24),
+                  label: Text(
+                    'تأكيد الإجابة ✅',
+                    style: GoogleFonts.cairo(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amberAccent,
+                    foregroundColor: Colors.black87,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    minimumSize: const Size(double.infinity, 52),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       );
@@ -948,51 +1188,68 @@ class _PictionaryGameState extends State<PictionaryGame> {
                     const SizedBox(height: 16),
                     Row(
                       children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () => _drawerDecide(true),
-                            icon: const Icon(Icons.check_circle, size: 30),
-                            label: Text(
-                              'صح ✅\n+1 نقطة',
-                              textAlign: TextAlign.center,
-                              style: GoogleFonts.cairo(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 16,
+                        if (!amIGuesser) ...[
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () => _drawerDecide(true),
+                              icon: const Icon(Icons.check_circle, size: 30),
+                              label: Text(
+                                'صح ✅\n+1 نقطة',
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.cairo(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                ),
                               ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green.shade600,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 18),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: () => _drawerDecide(false),
-                            icon: const Icon(Icons.cancel, size: 30),
-                            label: Text(
-                              'غلط ❌\nلا نقطة',
-                              textAlign: TextAlign.center,
-                              style: GoogleFonts.cairo(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 16,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red.shade600,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 18),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade600,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 18,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
                               ),
                             ),
                           ),
-                        ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () => _drawerDecide(false),
+                              icon: const Icon(Icons.cancel, size: 30),
+                              label: Text(
+                                'غلط ❌\nلا نقطة',
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.cairo(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red.shade600,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 18,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ] else ...[
+                          Expanded(
+                            child: Text(
+                              'بانتظار $_drawerName ليحكم على التخمين...',
+                              style: GoogleFonts.cairo(
+                                color: Colors.white,
+                                fontSize: 16,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ] else ...[
@@ -1056,29 +1313,38 @@ class _PictionaryGameState extends State<PictionaryGame> {
                       ),
                     ],
                     const SizedBox(height: 40),
-                    ElevatedButton.icon(
-                      onPressed: _nextRound,
-                      icon: const Icon(Icons.refresh_rounded, size: 24),
-                      label: Text(
-                        'دور جديد 🎨',
+                    if (widget.online && !widget.isHost)
+                      Text(
+                        'بانتظار المضيف ليبدأ دور جديد ⏳',
                         style: GoogleFonts.cairo(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
+                          color: Colors.white70,
+                          fontSize: 18,
+                        ),
+                      )
+                    else
+                      ElevatedButton.icon(
+                        onPressed: _nextRound,
+                        icon: const Icon(Icons.refresh_rounded, size: 24),
+                        label: Text(
+                          'دور جديد 🎨',
+                          style: GoogleFonts.cairo(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black87,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 40,
+                            vertical: 16,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          elevation: 8,
                         ),
                       ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black87,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 40,
-                          vertical: 16,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        elevation: 8,
-                      ),
-                    ),
                   ],
                 ],
               ),
