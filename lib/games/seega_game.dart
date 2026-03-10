@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
-
 import '../widgets/base_game_scaffold.dart';
+import '../services/score_service.dart';
 import '../services/socket_service.dart';
-
-enum PlayerType { p1, p2, empty }
+import '../widgets/game_intro_widget.dart';
 
 class SeegaGame extends StatefulWidget {
   final bool online;
@@ -25,401 +25,405 @@ class SeegaGame extends StatefulWidget {
 }
 
 class _SeegaGameState extends State<SeegaGame> {
-  // Seega is played on a 5x5 board.
-  // We represent the board as a 2D list.
-  List<List<PlayerType>> board = List.generate(
-    5,
-    (i) => List.generate(5, (j) => PlayerType.empty),
-  );
-
-  // Phase 1: Players drop pieces on the board (24 pieces total, 12 each).
-  // The center square (2,2) must remain empty in Phase 1.
-  // Phase 2: Players move pieces (up/down/left/right). A piece is captured if surrounded on opposite sides.
-  bool isPhaseDrop = true;
-  int dropCountP1 = 0;
-  int dropCountP2 = 0;
-
-  PlayerType currentPlayer = PlayerType.p1;
-  String? winnerMessage;
+  List<int> board = List.filled(9, 0);
+  int currentPlayer = 1;
+  int piecesPlaced1 = 0;
+  int piecesPlaced2 = 0;
+  int? selectedIndex;
+  String? winner;
+  bool isPlacementPhase = true;
   bool _showIntro = true;
-
-  // For Phase 2 movement
-  int? selectedRow;
-  int? selectedCol;
 
   @override
   void initState() {
     super.initState();
-    _initGame();
     if (widget.online) {
       _showIntro = false;
-      _setupSocket();
+      SocketService().socket.on('seega_state_updated', _onGameMove);
+      SocketService().socket.on('reset_game', _onResetGame);
     }
   }
 
-  void _initGame() {
-    board = List.generate(5, (i) => List.generate(5, (j) => PlayerType.empty));
-    isPhaseDrop = true;
-    dropCountP1 = 0;
-    dropCountP2 = 0;
-    currentPlayer = PlayerType.p1;
-    winnerMessage = null;
-    selectedRow = null;
-    selectedCol = null;
+  @override
+  void dispose() {
+    if (widget.online) {
+      SocketService().socket.off('seega_state_updated', _onGameMove);
+      SocketService().socket.off('reset_game', _onResetGame);
+    }
+    super.dispose();
   }
 
-  void _setupSocket() {
-    SocketService().socket.on('game_move', (data) {
-      if (!mounted) return;
-      if (data['type'] == 'seega_state_updated') {
-        setState(() {
-          List<dynamic> bData = data['board'];
-          for (int i = 0; i < 5; i++) {
-            for (int j = 0; j < 5; j++) {
-              board[i][j] = PlayerType.values[bData[i][j]];
-            }
-          }
-          isPhaseDrop = data['isPhaseDrop'];
-          dropCountP1 = data['dropCountP1'];
-          dropCountP2 = data['dropCountP2'];
-          currentPlayer = PlayerType.values[data['currentPlayer']];
-          winnerMessage = data['winnerMessage'];
-          selectedRow = data['selectedRow'];
-          selectedCol = data['selectedCol'];
-        });
-      }
-    });
+  void _onGameMove(dynamic data) {
+    if (!mounted) return;
+    int index = data['index'];
+    _processTap(index, isFromNetwork: true);
+  }
 
-    SocketService().socket.on('reset_game', (data) {
-      if (!mounted) return;
-      setState(() {
-        _initGame();
+  void _onResetGame(dynamic data) {
+    if (!mounted) return;
+    _localReset();
+  }
+
+  void _handleTap(int index) {
+    _processTap(index, isFromNetwork: false);
+  }
+
+  void _processTap(int index, {required bool isFromNetwork}) {
+    if (winner != null) return;
+
+    if (widget.online && !isFromNetwork) {
+      bool myTurn =
+          (widget.isHost && currentPlayer == 1) ||
+          (!widget.isHost && currentPlayer == 2);
+      if (!myTurn) return;
+    }
+
+    if (isPlacementPhase) {
+      _handlePlacement(index);
+    } else {
+      _handleMovement(index);
+    }
+
+    if (widget.online && !isFromNetwork) {
+      SocketService().socket.emit('seega_state_updated', {
+        'roomCode': widget.roomCode,
+        'moveData': {'index': index},
       });
-    });
+    }
   }
 
-  void _emitState() {
-    if (!widget.online || widget.roomCode == null) return;
-    SocketService().socket.emit('game_move', {
-      'roomCode': widget.roomCode,
-      'moveData': {
-        'type': 'seega_state_updated',
-        'board': board
-            .map((row) => row.map((cell) => cell.index).toList())
-            .toList(),
-        'isPhaseDrop': isPhaseDrop,
-        'dropCountP1': dropCountP1,
-        'dropCountP2': dropCountP2,
-        'currentPlayer': currentPlayer.index,
-        'winnerMessage': winnerMessage,
-        'selectedRow': selectedRow,
-        'selectedCol': selectedCol,
-      },
-    });
-  }
-
-  bool get _isMyTurn {
-    if (!widget.online) return true;
-    if (widget.isHost && currentPlayer == PlayerType.p1) return true;
-    if (!widget.isHost && currentPlayer == PlayerType.p2) return true;
-    return false;
-  }
-
-  void _handleCellTap(int row, int col) {
-    if (!_isMyTurn) return;
-    if (winnerMessage != null) return;
-
+  void _handlePlacement(int index) {
+    if (board[index] != 0) return;
     setState(() {
-      if (isPhaseDrop) {
-        // Phase 1: Dropping pieces
-        if (row == 2 && col == 2) {
-          // Cannot place in center
-          return;
-        }
-        if (board[row][col] != PlayerType.empty) {
-          return; // Cell occupied
-        }
-
-        board[row][col] = currentPlayer;
-
-        if (currentPlayer == PlayerType.p1)
-          dropCountP1++;
-        else
-          dropCountP2++;
-
-        if (dropCountP1 + dropCountP2 == 24) {
-          isPhaseDrop = false; // Transition to Phase 2
-        }
-
-        currentPlayer = (currentPlayer == PlayerType.p1)
-            ? PlayerType.p2
-            : PlayerType.p1;
+      board[index] = currentPlayer;
+      if (currentPlayer == 1) {
+        piecesPlaced1++;
       } else {
-        // Phase 2: Moving Pieces
-        if (selectedRow == null && selectedCol == null) {
-          // Select a piece
-          if (board[row][col] == currentPlayer) {
-            selectedRow = row;
-            selectedCol = col;
-          }
-        } else {
-          // Try to move
-          if (board[row][col] == currentPlayer) {
-            // Change selection to another own piece
-            selectedRow = row;
-            selectedCol = col;
-            return;
-          }
-
-          // Verify adjacency (non-diagonal)
-          if (board[row][col] == PlayerType.empty) {
-            int rDiff = (row - selectedRow!).abs();
-            int cDiff = (col - selectedCol!).abs();
-
-            if ((rDiff == 1 && cDiff == 0) || (rDiff == 0 && cDiff == 1)) {
-              // Valid move
-              board[row][col] = currentPlayer;
-              board[selectedRow!][selectedCol!] = PlayerType.empty;
-
-              // Check Captures around the NEW position
-              _checkCaptures(row, col);
-
-              // Deselect
-              selectedRow = null;
-              selectedCol = null;
-
-              _checkWinCondition();
-              if (winnerMessage == null) {
-                currentPlayer = (currentPlayer == PlayerType.p1)
-                    ? PlayerType.p2
-                    : PlayerType.p1;
-              }
-            }
-          }
-        }
+        piecesPlaced2++;
       }
-      _emitState();
+      if (piecesPlaced1 == 3 && piecesPlaced2 == 3) isPlacementPhase = false;
+      currentPlayer = currentPlayer == 1 ? 2 : 1;
     });
   }
 
-  void _checkCaptures(int r, int c) {
-    // A piece is captured if it is sandwiched between two of the opponent's pieces linearly
-    PlayerType opp = (currentPlayer == PlayerType.p1)
-        ? PlayerType.p2
-        : PlayerType.p1;
-
-    // The center cell (2,2) is safe in traditional Seega
-
-    // Check UP
-    if (r - 2 >= 0 &&
-        board[r - 1][c] == opp &&
-        board[r - 2][c] == currentPlayer) {
-      if (!(r - 1 == 2 && c == 2)) {
-        board[r - 1][c] = PlayerType.empty;
-      }
-    }
-    // Check DOWN
-    if (r + 2 <= 4 &&
-        board[r + 1][c] == opp &&
-        board[r + 2][c] == currentPlayer) {
-      if (!(r + 1 == 2 && c == 2)) {
-        board[r + 1][c] = PlayerType.empty;
-      }
-    }
-    // Check LEFT
-    if (c - 2 >= 0 &&
-        board[r][c - 1] == opp &&
-        board[r][c - 2] == currentPlayer) {
-      if (!(r == 2 && c - 1 == 2)) {
-        board[r][c - 1] = PlayerType.empty;
-      }
-    }
-    // Check RIGHT
-    if (c + 2 <= 4 &&
-        board[r][c + 1] == opp &&
-        board[r][c + 2] == currentPlayer) {
-      if (!(r == 2 && c + 1 == 2)) {
-        board[r][c + 1] = PlayerType.empty;
+  void _handleMovement(int index) {
+    if (selectedIndex == null) {
+      if (board[index] == currentPlayer) setState(() => selectedIndex = index);
+    } else {
+      if (_isAdjacent(selectedIndex!, index) && board[index] == 0) {
+        setState(() {
+          board[index] = currentPlayer;
+          board[selectedIndex!] = 0;
+          selectedIndex = null;
+          _checkWinner();
+          currentPlayer = currentPlayer == 1 ? 2 : 1;
+        });
+      } else if (board[index] == currentPlayer) {
+        setState(() => selectedIndex = index);
       }
     }
   }
 
-  void _checkWinCondition() {
-    if (isPhaseDrop) return; // Cant win during drop phase
-
-    int p1Count = 0;
-    int p2Count = 0;
-    for (int i = 0; i < 5; i++) {
-      for (int j = 0; j < 5; j++) {
-        if (board[i][j] == PlayerType.p1) p1Count++;
-        if (board[i][j] == PlayerType.p2) p2Count++;
-      }
-    }
-
-    // A player wins if the opponent has only 1 piece left (since 2 are required to surround)
-    if (p1Count < 2)
-      winnerMessage = "فاز اللاعب الأزرق!";
-    else if (p2Count < 2)
-      winnerMessage = "فاز اللاعب البرتقالي!";
+  bool _isAdjacent(int from, int to) {
+    int rowFrom = from ~/ 3, colFrom = from % 3;
+    int rowTo = to ~/ 3, colTo = to % 3;
+    return (rowFrom == rowTo && (colFrom - colTo).abs() == 1) ||
+        (colFrom == colTo && (rowFrom - rowTo).abs() == 1);
   }
 
-  Widget _buildPiece(PlayerType type, {bool isSelected = false}) {
-    if (type == PlayerType.empty) return const SizedBox();
+  void _checkWinner() {
+    const lines = [
+      [0, 1, 2],
+      [3, 4, 5],
+      [6, 7, 8],
+      [0, 3, 6],
+      [1, 4, 7],
+      [2, 5, 8],
+      [0, 4, 8],
+      [2, 4, 6],
+    ];
+    for (var line in lines) {
+      if (board[line[0]] != 0 &&
+          board[line[0]] == board[line[1]] &&
+          board[line[0]] == board[line[2]]) {
+        setState(() => winner = board[line[0]] == 1 ? 'الأحمر' : 'الأزرق');
 
-    Color c = type == PlayerType.p1 ? Colors.orange : Colors.blue;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      margin: EdgeInsets.all(isSelected ? 0 : 5),
-      decoration: BoxDecoration(
-        color: c,
-        shape: BoxShape.circle,
-        boxShadow: const [
-          BoxShadow(color: Colors.black45, blurRadius: 4, offset: Offset(2, 2)),
-        ],
-        border: isSelected
-            ? Border.all(color: Colors.white, width: 3)
-            : Border.all(color: Colors.transparent),
-      ),
-    );
+        // Award points
+        final scoreService = ScoreService();
+        if (scoreService.players.isNotEmpty) {
+          final winnerIndex = board[line[0]] == 1 ? 0 : 1;
+          if (winnerIndex < scoreService.players.length) {
+            scoreService.addScore(scoreService.players[winnerIndex].name, 10);
+          }
+        }
+        return;
+      }
+    }
+  }
+
+  void _localReset() {
+    setState(() {
+      board = List.filled(9, 0);
+      currentPlayer = 1;
+      piecesPlaced1 = 0;
+      piecesPlaced2 = 0;
+      selectedIndex = null;
+      winner = null;
+      isPlacementPhase = true;
+    });
+  }
+
+  void _resetGame() {
+    _localReset();
+    if (widget.online) {
+      SocketService().socket.emit('reset_game', {'roomCode': widget.roomCode});
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     if (_showIntro) {
       return BaseGameScaffold(
-        title: 'سيجة',
-        backgroundColor: Colors.brown[50]!,
-        body: Center(
-          child: ElevatedButton(
-            onPressed: () => setState(() => _showIntro = false),
-            child: Text('ابدأ اللعب', style: GoogleFonts.cairo(fontSize: 24)),
-          ),
+        title: '🎮 لعبة السيجا التاريخية',
+        backgroundColor: const Color(0xFF3E2723),
+        body: GameIntroWidget(
+          title: 'السيجا التاريخية',
+          icon: '🎮',
+          description:
+              'اللعبة القديمة الأصيلة اللي محتاجة ذكاء وتخطيط! السجا هي لعبة مصرية عريقة.. وزع حصواتك وفكر إزاي تحاصر خصمك وتكسب!',
+          onStart: () => setState(() => _showIntro = false),
         ),
       );
     }
 
-    String turnText = currentPlayer == PlayerType.p1
-        ? "دور البرتقالي"
-        : "دور الأزرق";
-    if (winnerMessage != null) {
-      turnText = winnerMessage!;
-    } else {
-      if (isPhaseDrop)
-        turnText += " (مرحلة الإنزال)";
-      else
-        turnText += " (مرحلة التحريك والأكل)";
-    }
-
-    int p1Tokens = 0;
-    int p2Tokens = 0;
-    for (int i = 0; i < 5; i++) {
-      for (int j = 0; j < 5; j++) {
-        if (board[i][j] == PlayerType.p1) p1Tokens++;
-        if (board[i][j] == PlayerType.p2) p2Tokens++;
-      }
-    }
-
     return BaseGameScaffold(
-      title: 'سيجة (Seega)',
-      backgroundColor: Colors.brown[50]!,
-      body: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            turnText,
-            style: GoogleFonts.cairo(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: winnerMessage != null ? Colors.greenAccent : Colors.white,
-            ),
+      title: '🎮 لعبة السيجا التاريخية',
+      backgroundColor: const Color(0xFF3E2723), // Darker Brown
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh_rounded, color: Colors.white70),
+          onPressed: _resetGame,
+        ),
+      ],
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment.center,
+            radius: 1.2,
+            colors: [
+              const Color(0xFF5D4037),
+              const Color(0xFF3E2723),
+              const Color(0xFF21130D), // Much darker for contrast
+            ],
+            stops: const [0.0, 0.4, 1.0],
           ),
-          if (!isPhaseDrop) ...[
-            const SizedBox(height: 10),
-            Text(
-              "البرتقالي متبقي: $p1Tokens | الأزرق متبقي: $p2Tokens",
-              style: GoogleFonts.cairo(color: Colors.white70),
-            ),
-          ],
-          const SizedBox(height: 30),
-
-          Container(
-            width: MediaQuery.of(context).size.width * 0.9,
-            height: MediaQuery.of(context).size.width * 0.9,
-            constraints: const BoxConstraints(maxWidth: 400, maxHeight: 400),
-            decoration: BoxDecoration(
-              color: Colors.amber[100],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.brown, width: 6),
-              boxShadow: const [
-                BoxShadow(
-                  color: Colors.black26,
-                  blurRadius: 10,
-                  offset: Offset(0, 5),
-                ),
-              ],
-            ),
-            child: GridView.builder(
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 5,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1B1B1B).withValues(alpha: 0.8),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.white10),
               ),
-              itemCount: 25,
-              itemBuilder: (context, index) {
-                int row = index ~/ 5;
-                int col = index % 5;
-                bool isCenter = (row == 2 && col == 2);
-                bool isSelected = (selectedRow == row && selectedCol == col);
-
-                PlayerType cellState = board[row][col];
-
-                return GestureDetector(
-                  onTap: () => _handleCellTap(row, col),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: Colors.brown.withOpacity(0.3),
-                        width: 1,
-                      ),
-                      color: isCenter
-                          ? Colors.red.withOpacity(0.3)
-                          : (isSelected ? Colors.white30 : Colors.transparent),
-                    ),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        if (isCenter)
-                          Icon(
-                            Icons.star,
-                            color: Colors.brown.withOpacity(0.2),
-                            size: 40,
-                          ),
-                        _buildPiece(cellState, isSelected: isSelected),
-                      ],
+              child: Column(
+                children: [
+                  Text(
+                    isPlacementPhase ? 'مرحلة التوزيع' : 'مرحلة التحريك',
+                    style: GoogleFonts.cairo(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
                     ),
                   ),
-                );
-              },
-            ),
-          ),
-
-          const SizedBox(height: 30),
-          if (winnerMessage != null && widget.isHost)
-            ElevatedButton(
-              onPressed: () {
-                _initGame();
-                if (widget.online) {
-                  SocketService().socket.emit('reset_game', {
-                    'roomCode': widget.roomCode,
-                  });
-                }
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.brown),
-              child: Text(
-                'لعب مرة أخرى',
-                style: GoogleFonts.cairo(color: Colors.white),
+                  Text(
+                    isPlacementPhase
+                        ? 'حط حصواتك الـ 3 في الأماكن الفاضية'
+                        : 'حرك حصواتك جنب بعض عشان تكسب',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      color: Colors.white70,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ).animate().fadeIn().slideY(begin: -0.2, end: 0),
+            const SizedBox(height: 20),
+            Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black45,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: Text(
+                    winner != null
+                        ? 'المنتصر: $winner! 🏆'
+                        : widget.online
+                        ? (((widget.isHost && currentPlayer == 1) ||
+                                  (!widget.isHost && currentPlayer == 2))
+                              ? 'دور حجر الألماس'
+                              : 'دور ${widget.opponentName ?? 'المنافس'}')
+                        : 'دور الحجر: ${currentPlayer == 1 ? 'الأحمر' : 'الأزرق'}',
+                    style: GoogleFonts.cairo(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      color: winner != null
+                          ? Colors.amberAccent
+                          : (currentPlayer == 1
+                                ? Colors.redAccent.shade100
+                                : Colors.blueAccent.shade100),
+                    ),
+                  ),
+                )
+                .animate(key: ValueKey(winner ?? currentPlayer.toString()))
+                .scale()
+                .fadeIn(),
+            const SizedBox(height: 30),
+            Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2D1B17),
+                    borderRadius: BorderRadius.circular(40),
+                    border: Border.all(
+                      color: const Color(0xFF1E100D),
+                      width: 12,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black54,
+                        blurRadius: 20,
+                        offset: const Offset(8, 8),
+                      ),
+                    ],
+                  ),
+                  child: GridView.builder(
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 15,
+                          mainAxisSpacing: 15,
+                        ),
+                    itemCount: 9,
+                    itemBuilder: (context, index) {
+                      final value = board[index];
+                      final isSelected = selectedIndex == index;
+                      return GestureDetector(
+                        onTap: () => _handleTap(index),
+                        child: AnimatedContainer(
+                          duration: 250.ms,
+                          decoration: BoxDecoration(
+                            color: const Color(
+                              0xFF1A1A1A,
+                            ).withValues(alpha: 0.9),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isSelected ? Colors.amber : Colors.white10,
+                              width: 2,
+                            ),
+                          ),
+                          child: Center(
+                            child: value == 0
+                                ? null
+                                : Container(
+                                    width: 55,
+                                    height: 55,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: RadialGradient(
+                                        center: const Alignment(-0.3, -0.3),
+                                        radius: 0.9,
+                                        colors: value == 1
+                                            ? [
+                                                const Color(
+                                                  0xFFEF9A9A,
+                                                ), // light red
+                                                const Color(0xFFD32F2F), // red
+                                                const Color(
+                                                  0xFF8B0000,
+                                                ), // dark red
+                                              ]
+                                            : [
+                                                const Color(
+                                                  0xFF90CAF9,
+                                                ), // light blue
+                                                const Color(0xFF1976D2), // blue
+                                                const Color(
+                                                  0xFF0D47A1,
+                                                ), // dark blue
+                                              ],
+                                      ),
+                                      border: Border.all(
+                                        color: value == 1
+                                            ? const Color(0xFFFFCDD2)
+                                            : const Color(0xFFBBDEFB),
+                                        width: 2,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: value == 1
+                                              ? Colors.red.withValues(
+                                                  alpha: 0.6,
+                                                )
+                                              : Colors.blue.withValues(
+                                                  alpha: 0.6,
+                                                ),
+                                          blurRadius: 12,
+                                          spreadRadius: 2,
+                                        ),
+                                      ],
+                                    ),
+                                  ).animate().scale(
+                                    curve: Curves.elasticOut,
+                                    duration: 600.ms,
+                                  ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
               ),
             ),
-        ],
+            const SizedBox(height: 25),
+            if (winner != null)
+              ElevatedButton(
+                onPressed: _resetGame,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF5D4037),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 40,
+                    vertical: 16,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  'إعادة التحدي',
+                  style: GoogleFonts.cairo(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.amberAccent,
+                  ),
+                ),
+              ).animate().fadeIn().scale(),
+          ],
+        ),
       ),
     );
   }
