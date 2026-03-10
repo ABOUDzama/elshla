@@ -94,6 +94,27 @@ class _RoomScreenState extends State<RoomScreen> {
       );
       Navigator.popUntil(context, (route) => route.isFirst);
     });
+
+    SocketService().socket.on('player_returned_msg', (data) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Text('🔙 ', style: TextStyle(fontSize: 18)),
+              Expanded(
+                child: Text(
+                  data['message'] ?? 'عاد لاعب إلى الغرفة',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.blue.shade700,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    });
   }
 
   @override
@@ -119,7 +140,7 @@ class _RoomScreenState extends State<RoomScreen> {
     _navigateToGame(gameName);
   }
 
-  void _navigateToGame(String gameName) {
+  void _navigateToGame(String gameName) async {
     // Find opponent (first non-self player)
     final opponent = _players.firstWhere(
       (p) => p['id'] != SocketService().socket.id,
@@ -156,7 +177,21 @@ class _RoomScreenState extends State<RoomScreen> {
       default:
         return;
     }
-    Navigator.push(context, MaterialPageRoute(builder: (_) => gameScreen!));
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => gameScreen!),
+    );
+
+    if (mounted) {
+      final me = _players.firstWhere(
+        (p) => p['id'] == SocketService().socket.id,
+        orElse: () => {'name': widget.playerName},
+      );
+      SocketService().socket.emit('player_returned', {
+        'roomCode': widget.roomCode,
+        'playerName': me['name'],
+      });
+    }
   }
 
   void _copyCode() {
@@ -285,73 +320,57 @@ class _RoomScreenState extends State<RoomScreen> {
 
                     const SizedBox(height: 32),
 
-                    // Game selection (host only)
-                    if (widget.isHost) ...[
-                      Text(
-                        isReady
-                            ? '🎮 اختر اللعبة لتبدأ:'
-                            : '🎮 ستظهر الألعاب بعد انضمام لاعب آخر',
-                        style: GoogleFonts.cairo(
-                          fontSize: 17,
-                          fontWeight: FontWeight.bold,
-                          color: isReady ? Colors.white : Colors.white38,
-                        ),
+                    // Game selection
+                    Text(
+                      widget.isHost
+                          ? (isReady
+                                ? '🎮 اختر اللعبة لتبدأ:'
+                                : '🎮 ستظهر الألعاب بعد انضمام لاعب آخر')
+                          : '🎮 الألعاب المتاحة (في انتظار المضيف):',
+                      style: GoogleFonts.cairo(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: (isReady || !widget.isHost)
+                            ? Colors.white
+                            : Colors.white38,
                       ),
-                      const SizedBox(height: 16),
-                      _GameTile(
-                        title: 'إكس أو',
-                        subtitle: 'XO Classic',
-                        emoji: '❌⭕',
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF3B82F6), Color(0xFF1D4ED8)],
-                        ),
-                        onTap: isReady ? () => _selectGame('xo') : null,
+                    ),
+                    const SizedBox(height: 16),
+                    _GameTile(
+                      title: 'إكس أو',
+                      subtitle: 'XO Classic',
+                      emoji: '❌⭕',
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF3B82F6), Color(0xFF1D4ED8)],
                       ),
-                      const SizedBox(height: 12),
-                      _GameTile(
-                        title: 'سيجَا',
-                        subtitle: 'لعبة استراتيجية',
-                        emoji: '♟️',
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
-                        ),
-                        onTap: isReady ? () => _selectGame('seega') : null,
+                      onTap: (isReady && widget.isHost)
+                          ? () => _selectGame('xo')
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    _GameTile(
+                      title: 'سيجَا',
+                      subtitle: 'لعبة استراتيجية',
+                      emoji: '♟️',
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
                       ),
-                      const SizedBox(height: 12),
-                      _GameTile(
-                        title: 'الكبير ياكل الصغير',
-                        subtitle: 'Gobblet',
-                        emoji: '🔴🔵',
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
-                        ),
-                        onTap: isReady ? () => _selectGame('gobblet') : null,
+                      onTap: (isReady && widget.isHost)
+                          ? () => _selectGame('seega')
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    _GameTile(
+                      title: 'الكبير ياكل الصغير',
+                      subtitle: 'Gobblet',
+                      emoji: '🔴🔵',
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
                       ),
-                    ] else ...[
-                      // Guest message
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withAlpha(8),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.white12),
-                        ),
-                        child: Column(
-                          children: [
-                            const Text('⏳', style: TextStyle(fontSize: 40)),
-                            const SizedBox(height: 12),
-                            Text(
-                              'بانتظار المضيف لاختيار اللعبة...',
-                              style: GoogleFonts.cairo(
-                                color: Colors.white60,
-                                fontSize: 17,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                      onTap: (isReady && widget.isHost)
+                          ? () => _selectGame('gobblet')
+                          : null,
+                    ),
                     const SizedBox(height: 24),
                   ],
                 ),

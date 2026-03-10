@@ -120,6 +120,13 @@ io.on('connection', (socket) => {
         io.to(roomCode).emit('reset_game');
     });
 
+    // Handle player returning to room
+    socket.on('player_returned', ({ roomCode, playerName }) => {
+        io.to(roomCode).emit('player_returned_msg', { 
+            message: `عاد اللاعب "${playerName}" إلى غرفة الانتظار.` 
+        });
+    });
+
     // Handle disconnect
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
