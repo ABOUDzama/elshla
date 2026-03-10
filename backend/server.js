@@ -111,9 +111,28 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Forward game moves
+    // Forward general game moves
     socket.on('game_move', ({ roomCode, moveData }) => {
         socket.to(roomCode).emit('game_move', moveData);
+    });
+
+    // Ludo specific events
+    socket.on('ludo_dice_rolled', ({ roomCode, diceValue }) => {
+        socket.to(roomCode).emit('ludo_dice_rolled', { diceValue });
+    });
+
+    socket.on('ludo_state_updated', ({ roomCode, moveData }) => {
+        socket.to(roomCode).emit('ludo_state_updated', moveData);
+    });
+
+    // Gobblet specific events
+    socket.on('gobblet_state_updated', ({ roomCode, moveData }) => {
+        socket.to(roomCode).emit('gobblet_state_updated', moveData);
+    });
+
+    // Seega specific events
+    socket.on('seega_state_updated', ({ roomCode, moveData }) => {
+        socket.to(roomCode).emit('seega_state_updated', moveData);
     });
 
     socket.on('reset_game', ({ roomCode }) => {
@@ -122,8 +141,8 @@ io.on('connection', (socket) => {
 
     // Handle player returning to room
     socket.on('player_returned', ({ roomCode, playerName }) => {
-        io.to(roomCode).emit('player_returned_msg', { 
-            message: `عاد اللاعب "${playerName}" إلى غرفة الانتظار.` 
+        io.to(roomCode).emit('player_returned_msg', {
+            message: `عاد اللاعب "${playerName}" إلى غرفة الانتظار.`
         });
     });
 
