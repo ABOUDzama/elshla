@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../screens/settings_screen.dart';
+import 'voice_chat_widget.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class BaseGameScaffold extends StatelessWidget {
@@ -9,6 +10,8 @@ class BaseGameScaffold extends StatelessWidget {
   final Color backgroundColor;
   final List<Widget>? actions;
   final Widget? floatingActionButton;
+  final String? roomCode; // To enable voice chat widget
+  final String? myId;     // To identify the user for voice chat
 
   const BaseGameScaffold({
     super.key,
@@ -17,6 +20,8 @@ class BaseGameScaffold extends StatelessWidget {
     required this.backgroundColor,
     this.actions,
     this.floatingActionButton,
+    this.roomCode,
+    this.myId,
   });
 
   @override
@@ -42,6 +47,11 @@ class BaseGameScaffold extends StatelessWidget {
         elevation: 0,
         centerTitle: true,
         actions: [
+          if (roomCode != null && myId != null)
+            Padding(
+               padding: const EdgeInsets.only(right: 8.0, top: 8.0, bottom: 8.0),
+               child: VoiceChatWidget(roomCode: roomCode!, myId: myId!),
+            ),
           ...?actions,
           IconButton(
             icon: const Icon(Icons.settings_outlined),

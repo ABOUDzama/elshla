@@ -135,6 +135,19 @@ io.on('connection', (socket) => {
         socket.to(roomCode).emit('seega_state_updated', moveData);
     });
 
+    // Voice Chat (WebRTC Signaling) Events
+    socket.on('webrtc_offer', ({ roomCode, offer, callerId }) => {
+        socket.to(roomCode).emit('webrtc_offer', { offer, callerId });
+    });
+
+    socket.on('webrtc_answer', ({ roomCode, answer, callerId }) => {
+        socket.to(roomCode).emit('webrtc_answer', { answer, callerId });
+    });
+
+    socket.on('webrtc_ice_candidate', ({ roomCode, candidate, callerId }) => {
+        socket.to(roomCode).emit('webrtc_ice_candidate', { candidate, callerId });
+    });
+
     socket.on('reset_game', ({ roomCode }) => {
         io.to(roomCode).emit('reset_game');
     });

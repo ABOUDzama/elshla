@@ -9,6 +9,7 @@ import '../games/gobblet_game.dart';
 import '../games/five_seconds_game.dart';
 import '../games/pictionary_game.dart';
 import '../games/ludo_game.dart';
+import '../widgets/voice_chat_widget.dart';
 
 class RoomScreen extends StatefulWidget {
   final String roomCode;
@@ -476,6 +477,15 @@ class _RoomScreenState extends State<RoomScreen> {
               color: Colors.white,
             ),
           ),
+          // Microphone Button
+          if (widget.playerName.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 12.0),
+              child: VoiceChatWidget(
+                roomCode: widget.roomCode,
+                myId: widget.playerName,
+              ),
+            ),
           const Spacer(),
           if (widget.isHost)
             Container(
